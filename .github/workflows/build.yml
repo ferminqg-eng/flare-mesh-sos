@@ -47,7 +47,7 @@ jobs:
 
           if kts.exists():
               txt = kts.read_text()
-              txt = re.sub(r'compileSdk\s*=\s*[^\n]+', 'compileSdk = 36', txt)
+              txt = re.sub(r'compileSdk\s*=\s*[^\n]+', 'compileSdk = 37', txt)
               txt = re.sub(r'minSdk\s*=\s*[^\n]+', 'minSdk = 24', txt)
               txt = re.sub(r'targetSdk\s*=\s*[^\n]+', 'targetSdk = 36\n        multiDexEnabled = true', txt)
               if 'isCoreLibraryDesugaringEnabled' not in txt:
@@ -61,7 +61,7 @@ jobs:
               print("Patched android/app/build.gradle.kts successfully")
           elif groovy.exists():
               txt = groovy.read_text()
-              txt = re.sub(r'compileSdk\s+[^\n]+', 'compileSdk 36', txt)
+              txt = re.sub(r'compileSdk\s+[^\n]+', 'compileSdk 37', txt)
               txt = re.sub(r'minSdk\s+[^\n]+', 'minSdk 24', txt)
               txt = re.sub(r'targetSdk\s+[^\n]+', 'targetSdk 36\n        multiDexEnabled true', txt)
               if 'coreLibraryDesugaringEnabled' not in txt:
@@ -73,6 +73,10 @@ jobs:
                   txt += '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"\n}\n'
               groovy.write_text(txt)
               print("Patched android/app/build.gradle successfully")
+
+          gp = pathlib.Path("android/gradle.properties")
+          if gp.exists():
+              gp.write_text(gp.read_text() + "\nandroid.suppressUnsupportedCompileSdk=37\n")
           EOF
 
       - name: Instalar dependencias Dart/Flutter
