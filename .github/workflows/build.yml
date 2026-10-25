@@ -30,10 +30,14 @@ jobs:
       - name: Inicializar proyecto nativo Android y aplicar Manifiesto + Desugaring
         run: |
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.custom.xml
-          rm -rf android
-          flutter create --platforms=android --org com.offgrid --project-name flare_mesh_sos .
+          cp ios/Runner/Info.plist /tmp/Info.custom.plist
+          cp ios/Runner/Runner.entitlements /tmp/Runner.custom.entitlements
+          rm -rf android ios
+          flutter create --platforms=android,ios --org com.offgrid --project-name flare_mesh_sos .
           rm -f test/widget_test.dart
           cp /tmp/AndroidManifest.custom.xml android/app/src/main/AndroidManifest.xml
+          cp /tmp/Info.custom.plist ios/Runner/Info.plist
+          cp /tmp/Runner.custom.entitlements ios/Runner/Runner.entitlements
 
           python3 - <<'EOF'
           import pathlib, re
