@@ -85,7 +85,7 @@ jobs:
       - name: Generar íconos nativos (Sobre con Campana en Llamas)
         run: dart run flutter_launcher_icons
 
-      - name: Ejecutar pruebas unitarias del protocolo binario de 18 bytes
+      - name: Ejecutar pruebas unitarias del protocolo binario BLE Mesh
         run: flutter test test/mesh_packet_codec_test.dart
 
       - name: Compilar APK Release
@@ -102,10 +102,13 @@ jobs:
       - name: Publicar APK en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: FlareMesh SOS v1.0.${{ github.run_number }} (Release APK)
+          tag_name: v1.1.${{ github.run_number }}
+          name: FlareMesh SOS v1.1.${{ github.run_number }} (Release APK - Ping & Anti-Usurpación)
           body: |
-            APK Release compilado automáticamente para Android.
-            - Protocolo binario BLE Mesh estricto de 18 bytes + pasarela oportunista GPRS.
-            - Foreground Service Android 14+ y Alertas Críticas Full-Screen.
+            Actualización Release compilada para Android:
+            - Corrección PDU BLE (<31 bytes): eliminada sobrecarga UUID para transmisión instantánea entre teléfonos físicos.
+            - Eliminado flag restrictivo neverForLocation para detección garantizada de beacons en background en cualquier fabricante (Samsung, Xiaomi, Motorola, etc.).
+            - Protocolo binario de 20 bytes autenticado con etiqueta criptográfica anti-usurpación (PIN configurable).
+            - Nuevo botón interactivo de "Ping de Prueba" en Dashboard para probar enlace BLE y RSSI entre dispositivos.
+            - Opción en Configuración para editar y verificar el número propio.
           files: FlareMeshSOS.apk

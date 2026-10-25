@@ -10,8 +10,9 @@ import '../services/ble_mesh_background_service.dart';
 import '../services/contacts_adapter_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/location_service.dart';
+import '../services/mesh_packet_codec.dart';
 
-/// Repositorio central (Single Source of Truth) para configuración de red, contactos y despacho SOS.
+/// Repositorio central para gestión de identidad, permisos y emisión Mesh.
 class EmergencyMeshRepository {
   EmergencyMeshRepository({
     required LocalStorageService storageService,
@@ -29,7 +30,7 @@ class EmergencyMeshRepository {
 
   Future<String?> getRegisteredPhoneRaw() => _storage.getRegisteredPhoneRaw();
 
-  /// Valida y registra el número telefónico manual como ID único uint64 en la red Mesh.
+  /// Valida y registra o actualiza el número de teléfono (Node ID).
   Future<int> registerPhone(String rawInput) async {
     final parsedUint64 = EmergencyContact.parsePhoneToUint64(rawInput);
     if (parsedUint64 == null) {
@@ -46,7 +47,9 @@ class EmergencyMeshRepository {
     return parsedUint64;
   }
 
-  /// Solicita permisos de radio BLE, GPS y exención de batería antes de iniciar el nodo puente.
+  /// Permite modificar el número propio desde la pantalla de Configuración.
+  Future<int> updateOwnPhone(String rawInput) => registerPhone(rawInput);
+
   Future<void> requestMeshHardwarePermissions() async {
     final permissions = <Permission>[
       Permission.locationWhenInUse,
@@ -64,7 +67,38 @@ class EmergencyMeshRepository {
     await permissions.request();
   }
 
-  /// Captura coordenadas GPS precisas, empaqueta en 18 bytes y emite por BLE Mesh + GPRS.
+  /// Emite un pulso de prueba (Ping) de corto alcance para validar conectividad entre teléfonos.
+  Future<EmergencyPacket> sendTestPing() async {
+    final senderPhone = await _storage.getRegisteredPhoneUint64();
+    if (senderPhone == null) {
+      throw StateError('Registra tu número antes de emitir un ping.');
+    }
+
+    final messageId = await _storage.nextMessageIdUint8();
+    final contacts = await _storage.getEmergencyContacts();
+    final primaryPin = contacts.isNotEmpty ? contacts.first.verificationPin : '1234';
+
+    final authTag = MeshPacketCodec.computeAuthTag(
+      senderPhone: senderPhone,
+      emergencyCode: EmergencyType.testPing.code,
+      messageId: messageId,
+      verificationPin: primaryPin,
+    );
+
+    final packet = EmergencyPacket(
+      senderPhone: senderPhone,
+      latitude: 0.0,
+      longitude: 0.0,
+      emergencyCode: EmergencyType.testPing.code,
+      messageId: messageId,
+      authTag: authTag,
+    );
+
+    BleMeshBackgroundService.dispatchOwnEmergency(packet);
+    return packet;
+  }
+
+  /// Captura coordenadas GPS precisas, empaqueta con tag criptográfico y emite por Mesh.
   Future<EmergencyPacket> triggerEmergencyBroadcast(EmergencyType type) async {
     final senderPhone = await _storage.getRegisteredPhoneUint64();
     if (senderPhone == null) {
@@ -75,12 +109,23 @@ class EmergencyMeshRepository {
     final position = await _location.getCurrentEmergencyPosition();
     final messageId = await _storage.nextMessageIdUint8();
 
+    final contacts = await _storage.getEmergencyContacts();
+    final primaryPin = contacts.isNotEmpty ? contacts.first.verificationPin : '1234';
+
+    final authTag = MeshPacketCodec.computeAuthTag(
+      senderPhone: senderPhone,
+      emergencyCode: type.code,
+      messageId: messageId,
+      verificationPin: primaryPin,
+    );
+
     final packet = EmergencyPacket(
       senderPhone: senderPhone,
       latitude: position.latitude,
       longitude: position.longitude,
       emergencyCode: type.code,
       messageId: messageId,
+      authTag: authTag,
     );
 
     BleMeshBackgroundService.dispatchOwnEmergency(packet);

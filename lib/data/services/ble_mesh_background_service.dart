@@ -9,6 +9,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_ble_peripheral/flutter_ble_peripheral.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:vibration/vibration.dart';
 
 import '../../domain/models/emergency_contact.dart';
 import '../../domain/models/emergency_packet.dart';
@@ -17,15 +18,15 @@ import 'gprs_gateway_service.dart';
 import 'local_storage_service.dart';
 import 'mesh_packet_codec.dart';
 
-/// Nombres de eventos IPC entre el Isolate de UI y el Isolate del Servicio Background.
 abstract final class MeshServiceEvents {
   static const String broadcastOwnSos = 'broadcast_own_sos';
   static const String reloadConfiguration = 'reload_configuration';
   static const String incomingEmergencyAlert = 'incoming_emergency_alert';
   static const String meshStatsUpdated = 'mesh_stats_updated';
+  static const String meshPingReceived = 'mesh_ping_received';
 }
 
-/// Caché circular con TTL en memoria RAM para deduplicar paquetes Mesh por `(senderPhone, messageId)`.
+/// Caché circular con TTL en memoria RAM para deduplicar paquetes Mesh.
 class SeenPacketsCache {
   SeenPacketsCache({
     this.maxEntries = 512,
@@ -36,7 +37,6 @@ class SeenPacketsCache {
   final Duration ttl;
   final LinkedHashMap<String, DateTime> _entries = LinkedHashMap<String, DateTime>();
 
-  /// Retorna `true` si el paquete es NUEVO y lo registra; retorna `false` si ya fue visto.
   bool markIfNew(EmergencyPacket packet) {
     final now = DateTime.now();
     _evictExpired(now);
@@ -61,14 +61,12 @@ class SeenPacketsCache {
   }
 }
 
-/// Inicializador y orquestador del nodo BLE Mesh en segundo plano.
 class BleMeshBackgroundService {
   const BleMeshBackgroundService._();
 
   static const String _foregroundChannelId = 'flare_mesh_relay_daemon';
   static const int _foregroundNotificationId = 9911;
 
-  /// Configura e inicia el Foreground Service (Android) y los hooks Background (iOS).
   static Future<void> initializeAndStart() async {
     final service = FlutterBackgroundService();
 
@@ -91,8 +89,8 @@ class BleMeshBackgroundService {
         autoStartOnBoot: true,
         isForegroundMode: true,
         notificationChannelId: _foregroundChannelId,
-        initialNotificationTitle: 'FlareMesh SOS • Nodo Activo',
-        initialNotificationContent: 'Escuchando balizas BLE y colaborando como puente off-grid',
+        initialNotificationTitle: 'FlareMesh SOS • Red Activa',
+        initialNotificationContent: 'Escaneando balizas BLE Mesh y listo para retransmitir',
         foregroundServiceNotificationId: _foregroundNotificationId,
         foregroundServiceTypes: <AndroidForegroundType>[
           AndroidForegroundType.connectedDevice,
@@ -127,6 +125,9 @@ class BleMeshBackgroundService {
 
   static Stream<Map<String, dynamic>?> get onMeshStatsStream =>
       FlutterBackgroundService().on(MeshServiceEvents.meshStatsUpdated);
+
+  static Stream<Map<String, dynamic>?> get onMeshPingStream =>
+      FlutterBackgroundService().on(MeshServiceEvents.meshPingReceived);
 }
 
 @pragma('vm:entry-point')
@@ -155,23 +156,20 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
   Timer? stopAdvertisingTimer;
   Timer? scanWatchdogTimer;
 
-  Future<void> advertise18BytePayload(
-    Uint8List payload18Bytes, {
-    Duration burstDuration = const Duration(seconds: 20),
+  Future<void> advertisePayload(
+    Uint8List payloadBytes, {
+    Duration burstDuration = const Duration(seconds: 25),
   }) async {
-    assert(payload18Bytes.length == MeshPacketCodec.payloadByteLength);
-
     stopAdvertisingTimer?.cancel();
     if (await blePeripheral.isAdvertising) {
       await blePeripheral.stop();
     }
 
-    // Presupuesto PDU BLE 4.0 Legacy (Máx 31 bytes):
-    // Flags (3 B) + 16-bit Service UUID 0xFD99 (4 B) + Manufacturer Data (4 B header + 18 B) = 29 bytes <= 31 B.
+    // PDU BLE Legacy: Manufacturer Data (24 B) + Flags (3 B) = 27 bytes <= 31 bytes
+    // No incluimos UUID de 128 bits para no desbordar el búfer de radio en Android.
     final advertiseData = AdvertiseDataCore(
-      serviceUuid: MeshPacketCodec.meshServiceUuid,
       manufacturerId: MeshPacketCodec.meshManufacturerId,
-      manufacturerData: payload18Bytes,
+      manufacturerData: payloadBytes,
     );
 
     const androidSettings = AndroidAdvertiseSettings(
@@ -200,12 +198,6 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
     if (mfBytes != null && mfBytes.length == MeshPacketCodec.payloadByteLength) {
       return Uint8List.fromList(mfBytes);
     }
-
-    final serviceGuid = Guid(MeshPacketCodec.meshServiceUuid);
-    final svcBytes = adv.serviceData[serviceGuid];
-    if (svcBytes != null && svcBytes.length == MeshPacketCodec.payloadByteLength) {
-      return Uint8List.fromList(svcBytes);
-    }
     return null;
   }
 
@@ -217,14 +209,17 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
       final packet = MeshPacketCodec.tryDecode(rawBytes);
       if (packet == null) continue;
 
+      // 1. Ignorar eco de transmisiones propias
       if (ownPhoneId != null && packet.senderPhone == ownPhoneId) {
         continue;
       }
 
+      // 2. Deduplicación por (senderPhone, messageId)
       if (!seenCache.markIfNew(packet)) {
         continue;
       }
 
+      // 3. Buscar si el emisor coincide con alguno de los 4 contactos de emergencia
       EmergencyContact? matchedContact;
       for (final contact in emergencyContacts) {
         if (contact.matchesSender(packet.senderPhone)) {
@@ -233,15 +228,38 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
         }
       }
 
+      // 4. Caso Especial: Pulso de Prueba (Ping de Enlace)
+      if (packet.isTestPing) {
+        final isAuthentic = matchedContact != null &&
+            packet.authTag ==
+                matchedContact.computeExpectedAuthTag(
+                  senderPhone: packet.senderPhone,
+                  emergencyCode: packet.emergencyCode,
+                  messageId: packet.messageId,
+                );
+
+        service.invoke(MeshServiceEvents.meshPingReceived, <String, dynamic>{
+          'senderPhone': packet.senderPhone,
+          'senderName': matchedContact?.displayName ?? '+${packet.senderPhone}',
+          'rssi': result.rssi,
+          'isKnownContact': matchedContact != null,
+          'isAuthentic': isAuthentic,
+        });
+
+        if (await Vibration.hasVibrator()) {
+          await Vibration.vibrate(duration: 120, amplitude: 180);
+        }
+        continue;
+      }
+
+      // 5. Casos de Emergencias Reales (Códigos 1..4)
       if (matchedContact == null) {
-        // MODO PUENTE CIEGO (BLIND RELAY)
-        final jitterMs = 60 + random.nextInt(260);
+        // MODO PUENTE CIEGO (BLIND RELAY):
+        // Retransmite silenciosamente el paquete con jitter aleatorio
+        final jitterMs = 50 + random.nextInt(220);
         unawaited(
           Future<void>.delayed(Duration(milliseconds: jitterMs), () async {
-            await advertise18BytePayload(
-              rawBytes,
-              burstDuration: const Duration(seconds: 15),
-            );
+            await advertisePayload(rawBytes, burstDuration: const Duration(seconds: 15));
           }),
         );
         unawaited(gprsGateway.tryForwardBinaryPacket(rawBytes));
@@ -258,7 +276,15 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
           );
         }
       } else {
-        // ALERTA ENTRANTE DE UNO DE LOS 4 CONTACTOS DE EMERGENCIA
+        // CONTACTO DE EMERGENCIA REGISTRADO:
+        // Validar comprobación anti-usurpación con el PIN acordado
+        final expectedAuthTag = matchedContact.computeExpectedAuthTag(
+          senderPhone: packet.senderPhone,
+          emergencyCode: packet.emergencyCode,
+          messageId: packet.messageId,
+        );
+        final isAuthentic = (packet.authTag == expectedAuthTag);
+
         final alertSettings = await storage.getAlertSettings(reload: true);
         await CriticalAlertService.instance.triggerIncomingEmergencyAlert(
           packet: packet,
@@ -270,9 +296,10 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
           'packet': packet.toIsolateMap(),
           'senderName': matchedContact.displayName,
           'senderRawPhone': matchedContact.rawPhone,
+          'isAuthentic': isAuthentic,
         });
 
-        unawaited(advertise18BytePayload(rawBytes, burstDuration: const Duration(seconds: 15)));
+        unawaited(advertisePayload(rawBytes, burstDuration: const Duration(seconds: 15)));
         unawaited(gprsGateway.tryForwardBinaryPacket(rawBytes));
       }
     }
@@ -284,10 +311,9 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
 
     if (!FlutterBluePlus.isScanningNow) {
       await FlutterBluePlus.startScan(
-        withServices: <Guid>[Guid(MeshPacketCodec.meshServiceUuid)],
+        androidScanMode: AndroidScanMode.lowLatency,
         continuousUpdates: true,
         androidUsesFineLocation: true,
-        removeIfGone: const Duration(seconds: 6),
       );
     }
   }
@@ -306,16 +332,18 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
     final packet = EmergencyPacket.fromIsolateMap(payload);
     seenCache.markIfNew(packet);
 
-    final raw18Bytes = MeshPacketCodec.encode(packet);
-    await advertise18BytePayload(
-      raw18Bytes,
-      burstDuration: const Duration(seconds: 35),
+    final rawBytes = MeshPacketCodec.encode(packet);
+    await advertisePayload(
+      rawBytes,
+      burstDuration: packet.isTestPing
+          ? const Duration(seconds: 10)
+          : const Duration(seconds: 35),
     );
-    unawaited(gprsGateway.tryForwardBinaryPacket(raw18Bytes));
+    unawaited(gprsGateway.tryForwardBinaryPacket(rawBytes));
   });
 
   await ensureScanningActive();
-  scanWatchdogTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+  scanWatchdogTimer = Timer.periodic(const Duration(seconds: 20), (_) {
     unawaited(ensureScanningActive());
   });
 

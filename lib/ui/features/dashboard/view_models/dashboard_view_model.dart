@@ -15,10 +15,17 @@ class DashboardViewModel extends ChangeNotifier {
       _relayedCount = (event['relayedCount'] as num?)?.toInt() ?? _relayedCount;
       notifyListeners();
     });
+
+    _pingSubscription = BleMeshBackgroundService.onMeshPingStream.listen((event) {
+      if (event == null) return;
+      _lastReceivedPing = Map<String, dynamic>.from(event);
+      notifyListeners();
+    });
   }
 
   final EmergencyMeshRepository _repository;
   StreamSubscription<Map<String, dynamic>?>? _statsSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _pingSubscription;
 
   int? _ownPhoneUint64;
   int? get ownPhoneUint64 => _ownPhoneUint64;
@@ -32,12 +39,35 @@ class DashboardViewModel extends ChangeNotifier {
   int _relayedCount = 0;
   int get relayedCount => _relayedCount;
 
+  bool _isSendingPing = false;
+  bool get isSendingPing => _isSendingPing;
+
+  Map<String, dynamic>? _lastReceivedPing;
+  Map<String, dynamic>? get lastReceivedPing => _lastReceivedPing;
+
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
   Future<void> loadNodeIdentity() async {
     _ownPhoneUint64 = await _repository.getRegisteredPhoneId();
     notifyListeners();
+  }
+
+  Future<void> sendPing() async {
+    if (_isSendingPing) return;
+    _isSendingPing = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _repository.sendTestPing();
+    } catch (e) {
+      _errorMessage = 'Error enviando ping: $e';
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      _isSendingPing = false;
+      notifyListeners();
+    }
   }
 
   Future<EmergencyPacket?> fireEmergency(EmergencyType type) async {
@@ -62,6 +92,7 @@ class DashboardViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _statsSubscription?.cancel();
+    _pingSubscription?.cancel();
     super.dispose();
   }
 }

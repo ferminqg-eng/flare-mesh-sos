@@ -6,7 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/flaming_bell_envelope_logo.dart';
 import '../view_models/dashboard_view_model.dart';
 
-/// Pantalla 3: Home (Dashboard) con los 4 botones grandes y accesibles para disparar emergencias.
+/// Pantalla 3: Home (Dashboard) con telemetría de enlace en vivo, Ping de prueba y los 4 botones SOS.
 class HomeDashboardView extends StatefulWidget {
   const HomeDashboardView({
     super.key,
@@ -28,6 +28,22 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
     widget.viewModel.loadNodeIdentity();
   }
 
+  Future<void> _handlePingTap() async {
+    await HapticFeedback.mediumImpact();
+    await widget.viewModel.sendPing();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: AppTheme.signalCyan,
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          '📡 Pulso de prueba (Ping) transmitido vía BLE. Si hay otro teléfono cerca responderá al instante.',
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleEmergencyTap(EmergencyType type) async {
     await HapticFeedback.heavyImpact();
     final packet = await widget.viewModel.fireEmergency(type);
@@ -39,7 +55,7 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
           backgroundColor: AppTheme.relayGreen,
           behavior: SnackBarBehavior.floating,
           content: Text(
-            'Baliza de 18 bytes emitida (Msg #${packet.messageId}) • '
+            'Baliza BLE radiada (Msg #${packet.messageId}) • '
             'GPS: ${packet.latitude.toStringAsFixed(4)}, ${packet.longitude.toStringAsFixed(4)}',
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
@@ -73,7 +89,7 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
             Text(
-              'Malla Colaborativa BLE + GPRS',
+              'Malla Colaborativa BLE Off-Grid',
               style: TextStyle(fontSize: 11.5, color: Colors.white60),
             ),
           ],
@@ -91,19 +107,71 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
         child: ListenableBuilder(
           listenable: widget.viewModel,
           builder: (context, _) {
+            final lastPing = widget.viewModel.lastReceivedPing;
+
             return Padding(
-              padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  // Banner de telemetría del Nodo Puente
+                  // Banner de telemetría del Nodo Puente y botón de Ping
                   _MeshNodeStatusCard(
                     ownNodeId: widget.viewModel.ownPhoneUint64,
                     relayedPackets: widget.viewModel.relayedCount,
+                    isSendingPing: widget.viewModel.isSendingPing,
+                    onPingPressed: _handlePingTap,
                   ),
-                  const SizedBox(height: 18),
+
+                  // Alerta visual de Ping recibido recientemente
+                  if (lastPing != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceSlate,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: (lastPing['isAuthentic'] as bool? ?? false)
+                              ? AppTheme.relayGreen
+                              : AppTheme.flameAmber,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            (lastPing['isAuthentic'] as bool? ?? false)
+                                ? Icons.verified_rounded
+                                : Icons.sensors_rounded,
+                            color: (lastPing['isAuthentic'] as bool? ?? false)
+                                ? AppTheme.relayGreen
+                                : AppTheme.flameAmber,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '¡Enlace detectado con ${lastPing["senderName"]}!',
+                                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                                ),
+                                Text(
+                                  'Señal RSSI: ${lastPing["rssi"]} dBm • '
+                                  '${(lastPing["isAuthentic"] as bool? ?? false) ? "Firma Anti-Usurpación Válida" : "Nodo Cercano"}',
+                                  style: const TextStyle(fontSize: 11.5, color: Colors.white70),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 14),
                   const Text(
-                    'TOCA UN BOTÓN PARA EMITIR COORDENADAS Y ALERTA',
+                    'DISPARADORES DE EMERGENCIA OFF-GRID',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w800,
@@ -111,9 +179,9 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
                       color: Colors.white60,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
 
-                  // Cuadrícula expandida con los 4 botones grandes y accesibles
+                  // Cuadrícula expandida con los 4 botones grandes
                   Expanded(
                     child: Column(
                       children: <Widget>[
@@ -126,7 +194,7 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
                             onPressed: () => _handleEmergencyTap(EmergencyType.urgentHelp),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         Expanded(
                           child: _EmergencyActionButton(
                             type: EmergencyType.outOfCredit,
@@ -136,7 +204,7 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
                             onPressed: () => _handleEmergencyTap(EmergencyType.outOfCredit),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         Expanded(
                           child: _EmergencyActionButton(
                             type: EmergencyType.carBreakdown,
@@ -146,7 +214,7 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
                             onPressed: () => _handleEmergencyTap(EmergencyType.carBreakdown),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         Expanded(
                           child: _EmergencyActionButton(
                             type: EmergencyType.robberyTrackMe,
@@ -174,41 +242,45 @@ class _MeshNodeStatusCard extends StatelessWidget {
   const _MeshNodeStatusCard({
     required this.ownNodeId,
     required this.relayedPackets,
+    required this.isSendingPing,
+    required this.onPingPressed,
   });
 
   final int? ownNodeId;
   final int relayedPackets;
+  final bool isSendingPing;
+  final VoidCallback onPingPressed;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppTheme.surfaceSlate,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.relayGreen.withOpacity(0.45)),
+        border: Border.all(color: AppTheme.relayGreen.withValues(alpha: 0.45)),
       ),
       child: Row(
         children: <Widget>[
           Container(
-            width: 11,
-            height: 11,
+            width: 10,
+            height: 10,
             decoration: const BoxDecoration(
               color: AppTheme.relayGreen,
               shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 const Text(
-                  'Nodo Puente BLE Activo (18-Byte Binary Protocol)',
+                  'Nodo Mesh Activo (20-Byte Auth PDU)',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                 ),
                 Text(
-                  'ID: ${ownNodeId ?? "---"}  •  Puenteados: $relayedPackets paq.',
+                  'ID: ${ownNodeId ?? "---"} • Relays: $relayedPackets',
                   style: const TextStyle(
                     fontSize: 12,
                     color: Colors.white60,
@@ -218,7 +290,22 @@ class _MeshNodeStatusCard extends StatelessWidget {
               ],
             ),
           ),
-          const Icon(Icons.bluetooth_searching_rounded, color: AppTheme.signalCyan),
+          FilledButton.tonalIcon(
+            onPressed: isSendingPing ? null : onPingPressed,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.signalCyan.withValues(alpha: 0.2),
+              foregroundColor: AppTheme.signalCyan,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            icon: isSendingPing
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.signalCyan),
+                  )
+                : const Icon(Icons.radar_rounded, size: 16),
+            label: const Text('Ping', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+          ),
         ],
       ),
     );
@@ -257,11 +344,11 @@ class _EmergencyActionButton extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: <Color>[
-                  accentColor.withOpacity(0.26),
+                  accentColor.withValues(alpha: 0.26),
                   AppTheme.surfaceSlate,
                 ],
               ),
-              border: Border.all(color: accentColor.withOpacity(0.75), width: 1.8),
+              border: Border.all(color: accentColor.withValues(alpha: 0.75), width: 1.8),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -271,7 +358,7 @@ class _EmergencyActionButton extends StatelessWidget {
                     width: 58,
                     height: 58,
                     decoration: BoxDecoration(
-                      color: accentColor.withOpacity(0.22),
+                      color: accentColor.withValues(alpha: 0.22),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Center(

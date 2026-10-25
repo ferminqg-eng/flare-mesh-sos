@@ -1,6 +1,11 @@
-/// Códigos de emergencia de 1 byte (uint8) transmitidos en el payload binario BLE/GPRS.
-/// Jamás se envían Strings por aire; la traducción ocurre localmente en el receptor.
+/// Códigos de emergencia transmitidos en el payload binario BLE/GPRS.
 enum EmergencyType {
+  testPing(
+    code: 0,
+    title: 'Prueba de Enlace Mesh',
+    shortTag: 'PING MESH',
+    description: 'Pulso de prueba para verificar conectividad y señal con nodos cercanos.',
+  ),
   urgentHelp(
     code: 1,
     title: 'Ayúdame Urgente',
@@ -33,7 +38,6 @@ enum EmergencyType {
     required this.description,
   });
 
-  /// Valor uint8 (1..4) codificado en el byte 16 del paquete de 18 bytes.
   final int code;
   final String title;
   final String shortTag;

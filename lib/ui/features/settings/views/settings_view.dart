@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:vibration/vibration.dart';
 
 import '../../../../data/services/local_storage_service.dart';
@@ -7,8 +8,7 @@ import '../../../../domain/models/emergency_contact.dart';
 import '../../../core/theme/app_theme.dart';
 import '../view_models/settings_view_model.dart';
 
-/// Pantalla 2: Configuración de hasta 4 contactos de emergencia (vía `contacts_service`),
-/// selector de tonos críticos y toggle de "Vibración forzada".
+/// Pantalla 2: Configuración (Edición de número propio, Contactos con Anti-Usurpación, Tonos y Vibración).
 class SettingsView extends StatefulWidget {
   const SettingsView({
     super.key,
@@ -26,6 +26,127 @@ class _SettingsViewState extends State<SettingsView> {
   void initState() {
     super.initState();
     widget.viewModel.initialize();
+  }
+
+  Future<void> _openEditOwnPhoneDialog() async {
+    final controller = TextEditingController(
+      text: widget.viewModel.registeredPhoneRaw ?? '',
+    );
+
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceSlate,
+        title: const Row(
+          children: [
+            Icon(Icons.badge_rounded, color: AppTheme.flameAmber),
+            SizedBox(width: 10),
+            Text('Editar Mi Número (Nodo)'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Este número es tu identificador binario (uint64) en la red Mesh.',
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.phone,
+              autofocus: true,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9+\-\s()]')),
+                LengthLimitingTextInputFormatter(20),
+              ],
+              decoration: const InputDecoration(
+                hintText: '+58 412 5550199',
+                prefixIcon: Icon(Icons.phone_rounded, color: AppTheme.flameAmber),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.flameRed),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+
+    if (updated != null && updated.trim().isNotEmpty) {
+      await widget.viewModel.updateOwnPhone(updated);
+    }
+  }
+
+  Future<void> _openEditPinDialog(EmergencyContact contact) async {
+    final controller = TextEditingController(text: contact.verificationPin);
+
+    final newPin = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceSlate,
+        title: Row(
+          children: [
+            const Icon(Icons.security_rounded, color: AppTheme.signalCyan),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'PIN Anti-Usurpación (${contact.displayName})',
+                style: const TextStyle(fontSize: 17),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Acuerda un PIN de 4 dígitos con este contacto. Las alertas solo se considerarán legítimas si vienen firmadas con este PIN secreto.',
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              maxLength: 6,
+              style: const TextStyle(fontSize: 22, letterSpacing: 4, fontWeight: FontWeight.w900),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                hintText: '1234',
+                prefixIcon: Icon(Icons.key_rounded, color: AppTheme.signalCyan),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.signalCyan, foregroundColor: Colors.black),
+            child: const Text('Guardar PIN'),
+          ),
+        ],
+      ),
+    );
+
+    if (newPin != null && newPin.trim().isNotEmpty) {
+      await widget.viewModel.updateContactVerificationPin(contact, newPin);
+    }
   }
 
   Future<void> _openNativeContactPickerSheet() async {
@@ -76,6 +197,60 @@ class _SettingsViewState extends State<SettingsView> {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: <Widget>[
+              // ==================== SECCIÓN 0: MI NÚMERO (NODO) ====================
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSlate,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppTheme.cardBorder),
+                ),
+                child: Row(
+                  children: [
+                    const CircleAvatar(
+                      backgroundColor: AppTheme.backgroundObsidian,
+                      child: Icon(Icons.phone_iphone_rounded, color: AppTheme.flameAmber),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'MI NÚMERO EN LA RED (NODE ID)',
+                            style: TextStyle(
+                              color: AppTheme.flameAmber,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 11,
+                              letterSpacing: 0.9,
+                            ),
+                          ),
+                          Text(
+                            widget.viewModel.registeredPhoneRaw ?? 'No configurado',
+                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            'ID uint64: ${widget.viewModel.registeredPhoneUint64 ?? "---"}',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              color: Colors.white54,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _openEditOwnPhoneDialog,
+                      icon: const Icon(Icons.edit_rounded, size: 16),
+                      label: const Text('Editar'),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
               // ==================== SECCIÓN 1: 4 CONTACTOS DE EMERGENCIA ====================
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -99,8 +274,8 @@ class _SettingsViewState extends State<SettingsView> {
                 ],
               ),
               const Text(
-                'Solo las alertas provenientes de estos números despertarán tu teléfono. '
-                'Los paquetes de otros usuarios se retransmitirán en silencio como puente Mesh.',
+                'Solo las alertas de estos contactos despertarán tu teléfono. '
+                'Configura un PIN secreto por contacto para validar autenticidad (Anti-Usurpación).',
                 style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.35),
               ),
               const SizedBox(height: 14),
@@ -131,26 +306,70 @@ class _SettingsViewState extends State<SettingsView> {
                   (contact) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Card(
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: AppTheme.flameRed.withOpacity(0.18),
-                          foregroundColor: AppTheme.flameAmber,
-                          child: Text(
-                            contact.displayName.characters.first.toUpperCase(),
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        title: Text(
-                          contact.displayName,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(
-                          '${contact.rawPhone}  •  ID: ${contact.phoneUint64}',
-                          style: const TextStyle(fontSize: 12, color: Colors.white60),
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                          onPressed: () => widget.viewModel.removeEmergencyContact(contact),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: AppTheme.flameRed.withValues(alpha: 0.18),
+                                foregroundColor: AppTheme.flameAmber,
+                                child: Text(
+                                  contact.displayName.characters.first.toUpperCase(),
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                              title: Text(
+                                contact.displayName,
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              subtitle: Text(
+                                '${contact.rawPhone}  •  ID: ${contact.phoneUint64}',
+                                style: const TextStyle(fontSize: 12, color: Colors.white60),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                                onPressed: () => widget.viewModel.removeEmergencyContact(contact),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.backgroundObsidian,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: AppTheme.signalCyan.withValues(alpha: 0.5)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.lock_rounded, size: 14, color: AppTheme.signalCyan),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'PIN Verificación: ${contact.verificationPin}',
+                                          style: const TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppTheme.signalCyan,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  TextButton.icon(
+                                    onPressed: () => _openEditPinDialog(contact),
+                                    icon: const Icon(Icons.vpn_key_rounded, size: 15),
+                                    label: const Text('Cambiar PIN', style: TextStyle(fontSize: 12)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

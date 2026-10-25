@@ -11,6 +11,12 @@ class SettingsViewModel extends ChangeNotifier {
 
   final EmergencyMeshRepository _repository;
 
+  String? _registeredPhoneRaw;
+  String? get registeredPhoneRaw => _registeredPhoneRaw;
+
+  int? _registeredPhoneUint64;
+  int? get registeredPhoneUint64 => _registeredPhoneUint64;
+
   List<EmergencyContact> _selectedContacts = const <EmergencyContact>[];
   List<EmergencyContact> get selectedContacts => _selectedContacts;
 
@@ -30,11 +36,32 @@ class SettingsViewModel extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
+      _registeredPhoneRaw = await _repository.getRegisteredPhoneRaw();
+      _registeredPhoneUint64 = await _repository.getRegisteredPhoneId();
       _selectedContacts = await _repository.getSavedEmergencyContacts();
       _alertSettings = await _repository.getAlertSettings();
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<bool> updateOwnPhone(String rawPhoneInput) async {
+    try {
+      final updatedUint64 = await _repository.updateOwnPhone(rawPhoneInput);
+      _registeredPhoneUint64 = updatedUint64;
+      _registeredPhoneRaw = rawPhoneInput;
+      _statusMessage = 'Identificador actualizado exitosamente.';
+      notifyListeners();
+      return true;
+    } on FormatException catch (e) {
+      _statusMessage = e.message;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _statusMessage = 'Error actualizando número: $e';
+      notifyListeners();
+      return false;
     }
   }
 
@@ -71,6 +98,27 @@ class SettingsViewModel extends ChangeNotifier {
         .toList(growable: false);
     await _repository.updateEmergencyContacts(updated);
     _selectedContacts = updated;
+    notifyListeners();
+  }
+
+  Future<void> updateContactVerificationPin(EmergencyContact contact, String newPin) async {
+    final cleaned = newPin.trim();
+    if (cleaned.length < 4) {
+      _statusMessage = 'El PIN de verificación debe tener al menos 4 dígitos.';
+      notifyListeners();
+      return;
+    }
+
+    final updated = _selectedContacts.map((c) {
+      if (c.phoneUint64 == contact.phoneUint64) {
+        return c.copyWith(verificationPin: cleaned);
+      }
+      return c;
+    }).toList(growable: false);
+
+    await _repository.updateEmergencyContacts(updated);
+    _selectedContacts = updated;
+    _statusMessage = 'PIN anti-usurpación actualizado para ${contact.displayName}.';
     notifyListeners();
   }
 

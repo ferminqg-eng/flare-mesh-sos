@@ -1,7 +1,7 @@
 import 'emergency_type.dart';
 
-/// Modelo de dominio inmutable que representa el paquete binario de 18 bytes
-/// que viaja por la red colaborativa BLE Mesh y la pasarela oportunista GPRS.
+/// Modelo de dominio inmutable del paquete binario autenticado de 20 bytes
+/// para la red Mesh BLE y pasarela GPRS.
 class EmergencyPacket {
   const EmergencyPacket({
     required this.senderPhone,
@@ -9,26 +9,32 @@ class EmergencyPacket {
     required this.longitude,
     required this.emergencyCode,
     required this.messageId,
+    this.authTag = 0,
   });
 
   /// ID único del emisor en la red (uint64: 8 bytes, solo dígitos E.164).
   final int senderPhone;
 
-  /// Latitud GPS codificada como IEEE 754 float32 (4 bytes, precisión ~1.1 m).
+  /// Latitud GPS codificada como IEEE 754 float32 (4 bytes).
   final double latitude;
 
-  /// Longitud GPS codificada como IEEE 754 float32 (4 bytes, precisión ~1.1 m).
+  /// Longitud GPS codificada como IEEE 754 float32 (4 bytes).
   final double longitude;
 
-  /// Código de emergencia (uint8: 1 byte, valores 1..4).
+  /// Código de emergencia (uint8: 1 byte, 0 = Ping de prueba, 1..4 = Emergencias).
   final int emergencyCode;
 
   /// Identificador secuencial/pseudoaleatorio del mensaje (uint8: 1 byte, 0..255).
   final int messageId;
 
+  /// Token criptográfico de verificación anti-usurpación (uint16: 2 bytes).
+  final int authTag;
+
   EmergencyType get emergencyType => EmergencyType.fromCode(emergencyCode);
 
-  /// Clave compuesta en memoria RAM para evitar tormentas de retransmisión (Broadcast Storms).
+  bool get isTestPing => emergencyCode == EmergencyType.testPing.code;
+
+  /// Clave compuesta en memoria RAM para deduplicación.
   String get deduplicationKey => '$senderPhone:$messageId';
 
   Map<String, dynamic> toIsolateMap() => <String, dynamic>{
@@ -37,6 +43,7 @@ class EmergencyPacket {
         'longitude': longitude,
         'emergencyCode': emergencyCode,
         'messageId': messageId,
+        'authTag': authTag,
       };
 
   factory EmergencyPacket.fromIsolateMap(Map<String, dynamic> map) {
@@ -46,6 +53,7 @@ class EmergencyPacket {
       longitude: (map['longitude'] as num).toDouble(),
       emergencyCode: (map['emergencyCode'] as num).toInt(),
       messageId: (map['messageId'] as num).toInt(),
+      authTag: ((map['authTag'] as num?) ?? 0).toInt(),
     );
   }
 }
