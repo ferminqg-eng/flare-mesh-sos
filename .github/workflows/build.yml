@@ -32,6 +32,7 @@ jobs:
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.custom.xml
           rm -rf android
           flutter create --platforms=android --org com.offgrid --project-name flare_mesh_sos .
+          rm -f test/widget_test.dart
           cp /tmp/AndroidManifest.custom.xml android/app/src/main/AndroidManifest.xml
 
           python3 - <<'EOF'
