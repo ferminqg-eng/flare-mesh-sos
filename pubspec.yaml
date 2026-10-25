@@ -1,0 +1,57 @@
+name: flare_mesh_sos
+description: Aplicación de emergencias off-grid basada en red Mesh colaborativa vía BLE y pasarela GPRS.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- Core BLE (Central Scanning + Peripheral Advertising) ---
+  flutter_blue_plus: ^2.3.14
+  flutter_ble_peripheral: ^3.1.0
+
+  # --- Ejecución en Segundo Plano / Android Foreground Service ---
+  flutter_background_service: ^5.1.0
+  flutter_background_service_android: ^6.3.1
+
+  # --- Hardware, GPS, Agenda Nativa (Dart 3 / AGP 8+) y Permisos ---
+  geolocator: ^14.1.2
+  flutter_contacts: ^2.6.0
+  permission_handler: ^13.0.2
+
+  # --- Alertas Críticas, Vibración y Despertar de Pantalla ---
+  flutter_local_notifications: ^22.3.3
+  vibration: ^3.2.1
+  wakelock_plus: ^1.8.2
+
+  # --- Mapas y Persistencia Local ---
+  google_maps_flutter: ^2.19.0
+  shared_preferences: ^2.5.6
+
+  # --- Pasarela Híbrida GPRS / 2G (Fallback oportunista) ---
+  connectivity_plus: ^7.3.2
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Configuración del ícono: "Sobre con una campana en llamas"
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  adaptive_icon_background: "#0D1117"
+  adaptive_icon_foreground: "assets/icons/app_icon.png"
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/

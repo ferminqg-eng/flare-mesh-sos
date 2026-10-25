@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>FlareMesh SOS</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>flare_mesh_sos</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+
+	<!-- Modos en segundo plano obligatorios para actuar como Nodo Central + Periférico BLE -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+		<string>location</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+
+	<!--Identificador para tareas BGTaskScheduler de flutter_background_service -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>dev.flutter.background.refresh</string>
+	</array>
+
+	<!-- Descripciones de permisos obligatorias en iOS -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>FlareMesh SOS utiliza Bluetooth en segundo plano para enviar alertas de emergencia sin señal celular y actuar como puente solidario en la red Mesh.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Necesario para emitir y retransmitir paquetes binarios de emergencia a dispositivos cercanos.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Se requiere acceso al GPS de alta precisión para adjuntar tus coordenadas exactas cuando dispares una alerta de emergencia.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Permite mantener activa la recepción de balizas de emergencia y obtener tu ubicación precisa rápidamente ante un SOS.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Necesario para seleccionar hasta 4 contactos de confianza de tu agenda para recibir sus alertas de emergencia.</string>
+</dict>
+</plist>
