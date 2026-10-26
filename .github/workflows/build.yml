@@ -82,6 +82,30 @@ jobs:
       - name: Instalar dependencias Dart/Flutter
         run: flutter pub get
 
+      - name: Parchear flutter_ble_peripheral para resiliencia de antena en Android
+        run: |
+          python3 - <<'EOF'
+          import pathlib, os
+
+          cache = pathlib.Path(os.environ.get('PUB_CACHE', os.path.expanduser('~/.pub-cache')))
+          for p in cache.glob('**/FlutterBlePeripheralManager.kt'):
+              txt = p.read_text()
+              txt = txt.replace(
+                  'var mBluetoothManager: BluetoothManager? = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager',
+                  'val mBluetoothManager: BluetoothManager?\n        get() = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager'
+              )
+              txt = txt.replace(
+                  'var mBluetoothLeAdvertiser: BluetoothLeAdvertiser? = mBluetoothManager?.adapter?.bluetoothLeAdvertiser',
+                  'val mBluetoothLeAdvertiser: BluetoothLeAdvertiser?\n        get() = mBluetoothManager?.adapter?.bluetoothLeAdvertiser'
+              )
+              txt = txt.replace(
+                  'mBluetoothLeAdvertiser!!.startAdvertising(',
+                  'val adv = mBluetoothLeAdvertiser\n        if (adv == null) {\n            mAdvertiseCallback.onStartFailure(android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR)\n            return\n        }\n        adv.startAdvertising('
+              )
+              p.write_text(txt)
+              print(f"Patched: {p}")
+          EOF
+
       - name: Generar íconos nativos (Sobre con Campana en Llamas)
         run: dart run flutter_launcher_icons
 
@@ -102,13 +126,13 @@ jobs:
       - name: Publicar APK en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.${{ github.run_number }}
-          name: FlareMesh SOS v1.1.${{ github.run_number }} (Release APK - Ping & Anti-Usurpación)
+          tag_name: v1.2.${{ github.run_number }}
+          name: FlareMesh SOS v1.2.${{ github.run_number }} (Release APK - Bridgefy/Meshtastic Radio Fix)
           body: |
-            Actualización Release compilada para Android:
-            - Corrección PDU BLE (<31 bytes): eliminada sobrecarga UUID para transmisión instantánea entre teléfonos físicos.
-            - Eliminado flag restrictivo neverForLocation para detección garantizada de beacons en background en cualquier fabricante (Samsung, Xiaomi, Motorola, etc.).
-            - Protocolo binario de 20 bytes autenticado con etiqueta criptográfica anti-usurpación (PIN configurable).
-            - Nuevo botón interactivo de "Ping de Prueba" en Dashboard para probar enlace BLE y RSSI entre dispositivos.
-            - Opción en Configuración para editar y verificar el número propio.
+            Actualización Release de Conectividad Mesh (v1.2):
+            - Escaneo BLE Legacy obligatorio (androidLegacy: true en 1M PHY) para sintonizar anuncios periféricos directos.
+            - Prevención de fallos silenciosos por servicios de ubicación en Android (androidCheckLocationServices: false y permisos pre-validados en UI).
+            - Parche nativo en flutter_ble_peripheral: resolución dinámica de BluetoothLeAdvertiser sin fallos por NPE.
+            - Fallback resiliente en decodificación de tramas de fabricante (coincidencia 0xFF45, endianness invertido y tamaño exacto de 20 bytes).
+            - Barra de telemetría y diagnósticos de radio en tiempo real en la pantalla de inicio.
           files: FlareMeshSOS.apk

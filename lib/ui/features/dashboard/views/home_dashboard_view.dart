@@ -119,7 +119,9 @@ class _HomeDashboardViewState extends State<HomeDashboardView> {
                     ownNodeId: widget.viewModel.ownPhoneUint64,
                     relayedPackets: widget.viewModel.relayedCount,
                     isSendingPing: widget.viewModel.isSendingPing,
+                    diagnosticText: widget.viewModel.radioDiagnosticText,
                     onPingPressed: _handlePingTap,
+                    onRestartRadio: () => widget.viewModel.restartRadio(),
                   ),
 
                   // Alerta visual de Ping recibido recientemente
@@ -243,68 +245,111 @@ class _MeshNodeStatusCard extends StatelessWidget {
     required this.ownNodeId,
     required this.relayedPackets,
     required this.isSendingPing,
+    required this.diagnosticText,
     required this.onPingPressed,
+    required this.onRestartRadio,
   });
 
   final int? ownNodeId;
   final int relayedPackets;
   final bool isSendingPing;
+  final String diagnosticText;
   final VoidCallback onPingPressed;
+  final VoidCallback onRestartRadio;
 
   @override
   Widget build(BuildContext context) {
+    final hasError = diagnosticText.contains('error') || diagnosticText.contains('apagado');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppTheme.surfaceSlate,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.relayGreen.withValues(alpha: 0.45)),
+        border: Border.all(
+          color: hasError ? AppTheme.flameRed : AppTheme.relayGreen.withValues(alpha: 0.45),
+        ),
       ),
-      child: Row(
-        children: <Widget>[
-          Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              color: AppTheme.relayGreen,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  'Nodo Mesh Activo (20-Byte Auth PDU)',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: <Widget>[
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: hasError ? AppTheme.flameRed : AppTheme.relayGreen,
+                  shape: BoxShape.circle,
                 ),
-                Text(
-                  'ID: ${ownNodeId ?? "---"} • Relays: $relayedPackets',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.white60,
-                    fontFamily: 'monospace',
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'Nodo Mesh Activo (20-Byte Auth PDU)',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    Text(
+                      'ID: ${ownNodeId ?? "---"} • Relays: $relayedPackets',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white60,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: isSendingPing ? null : onPingPressed,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.signalCyan.withValues(alpha: 0.2),
+                  foregroundColor: AppTheme.signalCyan,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                icon: isSendingPing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.signalCyan),
+                      )
+                    : const Icon(Icons.radar_rounded, size: 16),
+                label: const Text('Ping', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    diagnosticText,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: hasError ? AppTheme.flameAmber : Colors.white70,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
+                if (hasError)
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, size: 18, color: AppTheme.flameAmber),
+                    tooltip: 'Reactivar Radio',
+                    onPressed: onRestartRadio,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
               ],
             ),
-          ),
-          FilledButton.tonalIcon(
-            onPressed: isSendingPing ? null : onPingPressed,
-            style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.signalCyan.withValues(alpha: 0.2),
-              foregroundColor: AppTheme.signalCyan,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-            icon: isSendingPing
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.signalCyan),
-                  )
-                : const Icon(Icons.radar_rounded, size: 16),
-            label: const Text('Ping', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
           ),
         ],
       ),

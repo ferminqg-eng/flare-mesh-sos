@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../domain/models/alert_settings.dart';
@@ -52,8 +53,9 @@ class EmergencyMeshRepository {
 
   Future<void> requestMeshHardwarePermissions() async {
     final permissions = <Permission>[
-      Permission.locationWhenInUse,
       Permission.notification,
+      Permission.location,
+      Permission.locationWhenInUse,
       if (Platform.isAndroid) ...<Permission>[
         Permission.bluetoothScan,
         Permission.bluetoothAdvertise,
@@ -65,6 +67,20 @@ class EmergencyMeshRepository {
     ];
 
     await permissions.request();
+
+    // Si el Bluetooth está apagado en Android, solicitar encendido
+    if (Platform.isAndroid) {
+      try {
+        final state = await FlutterBluePlus.adapterState.first
+            .timeout(const Duration(seconds: 2), onTimeout: () => FlutterBluePlus.adapterStateNow);
+        if (state != BluetoothAdapterState.on) {
+          await FlutterBluePlus.turnOn();
+        }
+      } catch (_) {}
+    }
+
+    // Notificar al Isolate en segundo plano que reactive sus antenas
+    BleMeshBackgroundService.restartRadio();
   }
 
   /// Emite un pulso de prueba (Ping) de corto alcance para validar conectividad entre teléfonos.

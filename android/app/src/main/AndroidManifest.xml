@@ -64,7 +64,7 @@
         <!-- Declaración obligatoria en Android 14+ (API 34+) para flutter_background_service -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="connectedDevice|location"
+            android:foregroundServiceType="connectedDevice"
             android:exported="true"
             tools:replace="android:exported" />
 

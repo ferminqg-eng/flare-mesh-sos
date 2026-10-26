@@ -24,6 +24,8 @@ abstract final class MeshServiceEvents {
   static const String incomingEmergencyAlert = 'incoming_emergency_alert';
   static const String meshStatsUpdated = 'mesh_stats_updated';
   static const String meshPingReceived = 'mesh_ping_received';
+  static const String restartRadio = 'restart_radio';
+  static const String diagnostics = 'mesh_diagnostics';
 }
 
 /// Caché circular con TTL en memoria RAM para deduplicar paquetes Mesh.
@@ -92,9 +94,10 @@ class BleMeshBackgroundService {
         initialNotificationTitle: 'FlareMesh SOS • Red Activa',
         initialNotificationContent: 'Escaneando balizas BLE Mesh y listo para retransmitir',
         foregroundServiceNotificationId: _foregroundNotificationId,
+        // SOLO connectedDevice: el tipo `location` lanza SecurityException en Android 14+
+        // cuando el servicio arranca desde BOOT/background y mata el nodo.
         foregroundServiceTypes: <AndroidForegroundType>[
           AndroidForegroundType.connectedDevice,
-          AndroidForegroundType.location,
         ],
       ),
       iosConfiguration: IosConfiguration(
@@ -109,7 +112,25 @@ class BleMeshBackgroundService {
     }
   }
 
-  static void dispatchOwnEmergency(EmergencyPacket packet) {
+  /// Garantiza que el nodo esté vivo (si murió, `invoke` se pierde en silencio).
+  static Future<void> ensureRunning() async {
+    final service = FlutterBackgroundService();
+    if (!await service.isRunning()) {
+      await initializeAndStart();
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+  }
+
+  /// Fuerza al nodo a reiniciar escaneo tras conceder permisos.
+  static void restartRadio() {
+    FlutterBackgroundService().invoke(MeshServiceEvents.restartRadio);
+  }
+
+  static Stream<Map<String, dynamic>?> get onDiagnosticsStream =>
+      FlutterBackgroundService().on(MeshServiceEvents.diagnostics);
+
+  static Future<void> dispatchOwnEmergency(EmergencyPacket packet) async {
+    await ensureRunning();
     FlutterBackgroundService().invoke(
       MeshServiceEvents.broadcastOwnSos,
       packet.toIsolateMap(),
@@ -153,50 +174,98 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
   int? ownPhoneId = await storage.getRegisteredPhoneUint64(reload: true);
   List<EmergencyContact> emergencyContacts = await storage.getEmergencyContacts(reload: true);
   int relayedPacketsCount = 0;
+  int meshFramesHeard = 0;
+  String scanStatus = 'iniciando';
+  String advStatus = 'inactivo';
   Timer? stopAdvertisingTimer;
   Timer? scanWatchdogTimer;
+
+  void publishDiagnostics() {
+    final text = 'Escaneo: $scanStatus | Antena TX: $advStatus | '
+        'Tramas Mesh oídas: $meshFramesHeard | Retransmitidas: $relayedPacketsCount';
+    service.invoke(MeshServiceEvents.diagnostics, <String, dynamic>{
+      'text': text,
+      'scanStatus': scanStatus,
+      'advStatus': advStatus,
+      'heard': meshFramesHeard,
+      'relayed': relayedPacketsCount,
+    });
+    if (service is AndroidServiceInstance) {
+      service.setForegroundNotificationInfo(
+        title: 'FlareMesh SOS • Nodo Mesh',
+        content: text,
+      );
+    }
+  }
 
   Future<void> advertisePayload(
     Uint8List payloadBytes, {
     Duration burstDuration = const Duration(seconds: 25),
   }) async {
     stopAdvertisingTimer?.cancel();
-    if (await blePeripheral.isAdvertising) {
-      await blePeripheral.stop();
-    }
-
-    // PDU BLE Legacy: Manufacturer Data (24 B) + Flags (3 B) = 27 bytes <= 31 bytes
-    // No incluimos UUID de 128 bits para no desbordar el búfer de radio en Android.
-    final advertiseData = AdvertiseDataCore(
-      manufacturerId: MeshPacketCodec.meshManufacturerId,
-      manufacturerData: payloadBytes,
-    );
-
-    const androidSettings = AndroidAdvertiseSettings(
-      advertiseSettings: AdvertiseSettings(
-        advertiseMode: AdvertiseMode.advertiseModeLowLatency,
-        txPowerLevel: AdvertiseTxPower.advertiseTxPowerHigh,
-        connectable: false,
-        timeout: 0,
-      ),
-    );
-
-    await blePeripheral.start(
-      advertiseData: advertiseData,
-      androidSettings: androidSettings,
-    );
-
-    stopAdvertisingTimer = Timer(burstDuration, () async {
+    try {
       if (await blePeripheral.isAdvertising) {
         await blePeripheral.stop();
+        // Android necesita liberar el slot del advertiser antes de reiniciarlo.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
       }
+
+      // PDU BLE Legacy: Flags (3 B) + Manufacturer AD (1+1+2+20 = 24 B) = 27 B <= 31 B.
+      // Sin UUID de 128 bits, sin nombre de dispositivo, sin TxPower.
+      final advertiseData = AdvertiseDataCore(
+        manufacturerId: MeshPacketCodec.meshManufacturerId,
+        manufacturerData: payloadBytes,
+      );
+
+      const androidSettings = AndroidAdvertiseSettings(
+        advertiseSettings: AdvertiseSettings(
+          advertiseMode: AdvertiseMode.advertiseModeLowLatency,
+          txPowerLevel: AdvertiseTxPower.advertiseTxPowerHigh,
+          connectable: false,
+          timeout: 0,
+        ),
+      );
+
+      final state = await blePeripheral.start(
+        advertiseData: advertiseData,
+        androidSettings: androidSettings,
+      );
+      final nowAdvertising = await blePeripheral.isAdvertising;
+      advStatus = nowAdvertising ? 'EMITIENDO' : 'FALLO (${state.name})';
+    } catch (e) {
+      advStatus = 'ERROR: $e';
+    }
+    publishDiagnostics();
+
+    stopAdvertisingTimer = Timer(burstDuration, () async {
+      try {
+        if (await blePeripheral.isAdvertising) {
+          await blePeripheral.stop();
+        }
+      } catch (_) {}
+      advStatus = 'inactivo';
+      publishDiagnostics();
     });
   }
 
   Uint8List? extractRawPayload(AdvertisementData adv) {
+    // 1. Coincidencia directa por ID de fabricante de FlareMesh (0xFF45 = 65349)
     final mfBytes = adv.manufacturerData[MeshPacketCodec.meshManufacturerId];
     if (mfBytes != null && mfBytes.length == MeshPacketCodec.payloadByteLength) {
       return Uint8List.fromList(mfBytes);
+    }
+
+    // 2. Coincidencia por endianness invertido (0x45FF = 17919) común en chipsets MediaTek/Exynos
+    final mfBytesInv = adv.manufacturerData[0x45FF];
+    if (mfBytesInv != null && mfBytesInv.length == MeshPacketCodec.payloadByteLength) {
+      return Uint8List.fromList(mfBytesInv);
+    }
+
+    // 3. Fallback tolerante: inspeccionar cualquier fabricante cuyo payload sea exactamente 20 bytes
+    for (final entry in adv.manufacturerData.entries) {
+      if (entry.value.length == MeshPacketCodec.payloadByteLength) {
+        return Uint8List.fromList(entry.value);
+      }
     }
     return null;
   }
@@ -208,6 +277,11 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
 
       final packet = MeshPacketCodec.tryDecode(rawBytes);
       if (packet == null) continue;
+
+      meshFramesHeard++;
+      if (meshFramesHeard == 1 || meshFramesHeard % 10 == 0) {
+        publishDiagnostics();
+      }
 
       // 1. Ignorar eco de transmisiones propias
       if (ownPhoneId != null && packet.senderPhone == ownPhoneId) {
@@ -306,25 +380,66 @@ Future<void> onMeshServiceStart(ServiceInstance service) async {
   }
 
   Future<void> ensureScanningActive() async {
-    final adapterState = await FlutterBluePlus.adapterState.first;
-    if (adapterState != BluetoothAdapterState.on) return;
+    try {
+      if (FlutterBluePlus.isScanningNow) {
+        scanStatus = 'activo (escuchando)';
+        publishDiagnostics();
+        return;
+      }
 
-    if (!FlutterBluePlus.isScanningNow) {
+      final adapterState = await FlutterBluePlus.adapterState.first
+          .timeout(const Duration(seconds: 3), onTimeout: () => FlutterBluePlus.adapterStateNow);
+
+      if (adapterState != BluetoothAdapterState.on) {
+        scanStatus = 'Bluetooth apagado (${adapterState.name})';
+        publishDiagnostics();
+        return;
+      }
+
+      scanStatus = 'iniciando escaneo...';
+      publishDiagnostics();
+
       await FlutterBluePlus.startScan(
         androidScanMode: AndroidScanMode.lowLatency,
         continuousUpdates: true,
-        androidUsesFineLocation: true,
+        continuousDivisor: 1,
+        oneByOne: true,
+        androidLegacy: true, // Forzar escaneo en 1M PHY para capturar balizas Legacy
+        androidUsesFineLocation: false, // Permisos ya gestionados en el hilo UI
+        androidCheckLocationServices: false, // Evita fallo si el toggle GPS está desactivado
       );
+
+      scanStatus = 'activo (escuchando)';
+      publishDiagnostics();
+    } catch (e) {
+      scanStatus = 'error: $e';
+      publishDiagnostics();
     }
   }
 
-  final scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
-    unawaited(handleScanResults(results));
+  final scanSubscription = FlutterBluePlus.onScanResults.listen(
+    (results) {
+      unawaited(handleScanResults(results));
+    },
+    onError: (Object error) {
+      scanStatus = 'error stream: $error';
+      publishDiagnostics();
+    },
+  );
+
+  service.on(MeshServiceEvents.restartRadio).listen((_) async {
+    try {
+      if (FlutterBluePlus.isScanningNow) {
+        await FlutterBluePlus.stopScan();
+      }
+    } catch (_) {}
+    await ensureScanningActive();
   });
 
   service.on(MeshServiceEvents.reloadConfiguration).listen((_) async {
     ownPhoneId = await storage.getRegisteredPhoneUint64(reload: true);
     emergencyContacts = await storage.getEmergencyContacts(reload: true);
+    publishDiagnostics();
   });
 
   service.on(MeshServiceEvents.broadcastOwnSos).listen((payload) async {

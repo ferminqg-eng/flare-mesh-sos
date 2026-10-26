@@ -21,11 +21,21 @@ class DashboardViewModel extends ChangeNotifier {
       _lastReceivedPing = Map<String, dynamic>.from(event);
       notifyListeners();
     });
+
+    _diagSubscription = BleMeshBackgroundService.onDiagnosticsStream.listen((event) {
+      if (event == null) return;
+      _radioDiagnosticText = event['text'] as String? ?? _radioDiagnosticText;
+      notifyListeners();
+    });
   }
 
   final EmergencyMeshRepository _repository;
   StreamSubscription<Map<String, dynamic>?>? _statsSubscription;
   StreamSubscription<Map<String, dynamic>?>? _pingSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _diagSubscription;
+
+  String _radioDiagnosticText = 'Iniciando antenas Mesh...';
+  String get radioDiagnosticText => _radioDiagnosticText;
 
   int? _ownPhoneUint64;
   int? get ownPhoneUint64 => _ownPhoneUint64;
@@ -89,10 +99,15 @@ class DashboardViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> restartRadio() async {
+    await _repository.requestMeshHardwarePermissions();
+  }
+
   @override
   void dispose() {
     _statsSubscription?.cancel();
     _pingSubscription?.cancel();
+    _diagSubscription?.cancel();
     super.dispose();
   }
 }
